@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sam-sftp
+
+  SAM Template for Copying file from S3 Bucket to SFTP using private key triggered daily by CloudWatch Events rule
+  !!! Expects Private Key BASE64 encoded in AWS SecretsManager
+
+Parameters:
+  PrivateKeySecretArn: 
+    Type: String
+
+  PrivateKeySecretName: 
+    Type: String
+
+  S3BucketName: 
+    Type: String
+
+  S3FileName: 
+    Type: String
+
+  TargetHostName: 
+    Type: String
+
+  TargetUserName: 
+    Type: String
+    Default: "ec2-user"
+
+  TargetPath: 
+    Type: String
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
+
+Resources:
+  SftpCopyFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Environment:
+        Variables:
+          SSM_SECRET_NAME: !Ref PrivateKeySecretName
+          S3_BUCKET_NAME: !Ref S3BucketName
+          S3_FILE_NAME: !Ref S3FileName
+          TARGET_HOST_NAME: !Ref TargetHostName
+          TARGET_USER_NAME: !Ref TargetUserName
+          TARGET_PATH: !Ref TargetPath
+      Policies:
+      # Give Secrets Manager GetSecretValue access to your Lambda Function
+      - AWSSecretsManagerGetSecretValuePolicy:
+          SecretArn: !Ref PrivateKeySecretArn
+      - S3ReadPolicy:
+          BucketName: !Ref S3BucketName
+
+  PermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !GetAtt SftpCopyFunction.Arn
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt ScheduledEventRule.Arn
+
+  ScheduledEventRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Scheduled event to trigger lambda function"
+      ScheduleExpression: cron(0 0 * * ? *)
+      State: "ENABLED"
+      Name: "Copy-S3-File-To-SFTP"
+      Targets:
+        -
+          Arn: !GetAtt SftpCopyFunction.Arn
+          Id: "LambdaFunction"
+          #RoleArn: !GetAtt ScheduledEventIAMRole.Arn
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  SftpCopyFunction:
+    Description: "SFTP Copy Function ARN"
+    Value: !GetAtt SftpCopyFunction.Arn
+  SftpCopyFunctionIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt SftpCopyFunctionRole.Arn
